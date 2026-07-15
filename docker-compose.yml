@@ -1,0 +1,20 @@
+services:
+  container-ui:
+    build: .
+    container_name: container-ui
+    restart: unless-stopped
+    environment:
+      - APP_TITLE=${APP_TITLE:-Container Control}
+      - APP_SUBTITLE=${APP_SUBTITLE:-Your containers · Managed access}
+      # Names and/or labels (labels = comma-separated key=value, OR match)
+      - ALLOWED_CONTAINERS=${ALLOWED_CONTAINERS:-}
+      - FILTER_LABEL=${FILTER_LABEL:-}
+      # Never show/manage these. Self is also auto-detected.
+      - EXCLUDE_CONTAINERS=${EXCLUDE_CONTAINERS:-container-ui}
+      - LOG_TAIL=200
+    # # Prefer reverse-proxy auth; do not publish this port publicly without auth
+    # ports:
+    #   - "8080:8080"
+    volumes:
+      # Socket is a bidirectional channel; real safety = whitelist + proxy auth
+      - /var/run/docker.sock:/var/run/docker.sock:ro

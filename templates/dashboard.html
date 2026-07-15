@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ app_title }}</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <div class="brand-bar" aria-hidden="true"></div>
+
+    <div class="wrap">
+        <header class="header">
+            <div class="brand">
+                <div class="logo" aria-hidden="true">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false">
+                        <path d="M12 3L4.5 7.5V16.5L12 21L19.5 16.5V7.5L12 3Z" stroke="#ffffff" stroke-width="1.75" stroke-linejoin="round"/>
+                        <path d="M12 12L4.5 7.5M12 12L19.5 7.5M12 12V21" stroke="#ffffff" stroke-width="1.75" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1>{{ app_title }}</h1>
+                    <p class="subtitle">{{ app_subtitle }}</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <label class="chip" title="Reload every 30s">
+                    <input type="checkbox" id="auto-refresh">
+                    <span>Auto-refresh</span>
+                </label>
+                <button type="button" id="btn-refresh" class="btn-chip">Refresh</button>
+            </div>
+        </header>
+
+        {% if message %}
+        <div id="toast" class="toast {% if msg_error %}toast-err{% else %}toast-ok{% endif %}" role="status">
+            <span class="toast-msg">{{ message }}</span>
+            <button type="button" id="toast-close" class="toast-close" aria-label="Dismiss">✕</button>
+        </div>
+        {% endif %}
+
+        <div class="toolbar">
+            <div>
+                <h2>Your Containers</h2>
+                <p class="toolbar-hint">Only containers you are authorized to manage</p>
+            </div>
+            <div class="toolbar-right">
+                <input type="search" id="filter" placeholder="Filter by name…" autocomplete="off">
+                <div id="count">{{ containers|length }} container{% if containers|length != 1 %}s{% endif %}</div>
+            </div>
+        </div>
+
+        {% if containers %}
+        <div id="grid" class="grid">
+            {% for c in containers %}
+            <article class="card" data-name="{{ c.name|lower }}" data-display="{{ c.display_name|lower }}">
+                <div class="card-top">
+                    <div class="grow">
+                        <div class="card-title-row">
+                            <h3 class="mono" title="{{ c.name }}">{{ c.display_name }}</h3>
+                            <button type="button" class="copy-btn" data-name="{{ c.name }}" title="Copy full name: {{ c.name }}" aria-label="Copy full container name">⧉</button>
+                        </div>
+                        <div class="image-line mono" title="{{ c.image_full }}">{{ c.image }}</div>
+                    </div>
+                    {% if c.running %}
+                    <span class="badge badge-running"><span class="dot"></span> Running</span>
+                    {% elif c.status|lower in ('restarting', 'created') %}
+                    <span class="badge badge-transition"><span class="dot"></span> {{ c.status|capitalize }}</span>
+                    {% elif c.status|lower == 'paused' %}
+                    <span class="badge badge-paused"><span class="dot"></span> Paused</span>
+                    {% else %}
+                    <span class="badge badge-stopped"><span class="dot"></span> Stopped</span>
+                    {% endif %}
+                </div>
+
+                <div class="meta mono">
+                    <span class="status">{{ c.status }}</span>
+                    {% if c.health %}<span class="sep"> · </span>{{ c.health }}{% endif %}
+                    {% if not c.running and c.exit_code is not none %}<span class="sep"> · </span>exit {{ c.exit_code }}{% endif %}
+                </div>
+
+                <div class="actions">
+                    <form method="post" action="/action" class="act-form">
+                        <input type="hidden" name="container" value="{{ c.name }}">
+                        <input type="hidden" name="action" value="restart">
+                        <button type="submit" class="btn btn-restart">Restart</button>
+                    </form>
+                    {% if c.running %}
+                    <form method="post" action="/action" class="act-form">
+                        <input type="hidden" name="container" value="{{ c.name }}">
+                        <input type="hidden" name="action" value="stop">
+                        <button type="submit" class="btn btn-stop">Stop</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="/action" class="act-form">
+                        <input type="hidden" name="container" value="{{ c.name }}">
+                        <input type="hidden" name="action" value="start">
+                        <button type="submit" class="btn btn-start">Start</button>
+                    </form>
+                    {% endif %}
+                    <button type="button" class="btn-logs logs-btn" data-name="{{ c.name }}" title="View logs">Logs</button>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        <p id="filter-empty" class="filter-empty hidden">No containers match your filter.</p>
+        {% else %}
+        <div class="empty">
+            <h3>No containers found</h3>
+            <p>No match for your whitelist, or server config needs updating.</p>
+            <p class="hint mono">ALLOWED_CONTAINERS or FILTER_LABEL</p>
+        </div>
+        {% endif %}
+
+        <footer class="footer">Whitelist-enforced · reverse-proxy auth recommended</footer>
+    </div>
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="log-title">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-panel">
+            <div class="modal-head">
+                <div class="grow">
+                    <h2 id="log-title">Logs</h2>
+                    <p id="log-name" class="mono"></p>
+                </div>
+                <div class="modal-head-actions">
+                    <button type="button" id="log-reload" class="btn-sm">Reload</button>
+                    <button type="button" class="btn-icon" data-close aria-label="Close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <pre id="log-body">Loading…</pre>
+            </div>
+            <div class="modal-foot mono">Last {{ log_tail }} lines</div>
+        </div>
+    </div>
+
+    <script src="/static/app.js" defer></script>
+</body>
+</html>
