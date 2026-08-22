@@ -533,6 +533,14 @@ button:disabled {
   background: #10b981;
 }
 
+.btn-deploy {
+  background: #7c3aed;
+  color: var(--white);
+}
+.btn-deploy:hover:not(:disabled) {
+  background: #8b5cf6;
+}
+
 .btn-logs {
   width: auto;
   padding: 0.625rem 0.75rem;

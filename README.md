@@ -38,7 +38,24 @@ Tiny FastAPI + Jinja dashboard: whitelist-only container restart / stop / start 
 - Status badges (running / stopped / restarting / paused)
 - Branding: `APP_TITLE`, `APP_SUBTITLE`
 - Log length: `LOG_TAIL` (default 200, max 2000)
+- **Coolify deploy fallback**: redeploy stopped containers through the Coolify API when local Docker start fails (e.g. missing network after GC)
 - **No CDN**: local CSS/JS only (no Tailwind runtime / `eval`), basic CSP headers
+
+## Coolify deploy fallback
+
+If Coolify garbage collection removes a stopped container’s network (so Docker Start fails), you can redeploy from the dashboard via the Coolify API.
+
+Set in `.env`:
+
+```env
+COOLIFY_API_URL=http://192.168.1.11:8000
+COOLIFY_API_TOKEN=your-deploy-only-token
+COOLIFY_FORCE=false
+```
+
+- The UUID is extracted automatically from the Coolify container name suffix (`my-app-ae3esvwu63r3yxju2369ywwk`).
+- The **Deploy** button appears only on stopped containers.
+- The deploy request is fire-and-forget; use Refresh or auto-refresh to watch the container come back.
 
 ## Security
 
@@ -46,6 +63,7 @@ Tiny FastAPI + Jinja dashboard: whitelist-only container restart / stop / start 
 - Socket mount `:ro` is not a write block for the Docker API — real controls are whitelist + proxy auth
 - Empty whitelist → empty UI and blocked actions
 - Dashboard cannot manage itself (avoids lock-out via Stop/Restart)
+- Coolify API token is sent in the `Authorization` header and is never logged
 
 ## Troubleshooting
 

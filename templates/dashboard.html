@@ -97,6 +97,9 @@
                         <input type="hidden" name="action" value="start">
                         <button type="submit" class="btn btn-start">Start</button>
                     </form>
+                    {% if coolify_enabled %}
+                    <button type="button" class="btn btn-deploy deploy-btn" data-name="{{ c.name }}">Deploy</button>
+                    {% endif %}
                     {% endif %}
                     <button type="button" class="btn-logs logs-btn" data-name="{{ c.name }}" title="View logs">Logs</button>
                 </div>
@@ -112,7 +115,7 @@
         </div>
         {% endif %}
 
-        <footer class="footer">Whitelist-enforced · reverse-proxy auth recommended</footer>
+        <footer class="footer">Whitelist-enforced · reverse-proxy auth recommended{% if coolify_enabled %} · Deploy fallback configured{% endif %}</footer>
     </div>
 
     <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="log-title">

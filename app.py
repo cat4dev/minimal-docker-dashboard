@@ -6,10 +6,13 @@ Put behind reverse-proxy auth; do not expose port 8080 publicly.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
-from urllib.parse import quote
+import urllib.error
+import urllib.request
+from urllib.parse import quote, urlencode
 
 import docker
 from docker.errors import DockerException, NotFound
@@ -101,6 +104,9 @@ FILTER_LABELS = _parse_labels(os.getenv("FILTER_LABEL", "").strip())
 APP_TITLE = os.getenv("APP_TITLE", "Container Control")
 APP_SUBTITLE = os.getenv("APP_SUBTITLE", "Managed access dashboard")
 LOG_TAIL = max(1, min(int(os.getenv("LOG_TAIL", "200")), 2000))
+COOLIFY_API_URL = os.getenv("COOLIFY_API_URL", "").rstrip("/")
+COOLIFY_API_TOKEN = os.getenv("COOLIFY_API_TOKEN", "")
+COOLIFY_FORCE = os.getenv("COOLIFY_FORCE", "false").lower() in ("1", "true", "yes")
 SELF_IDS = _self_ids()
 
 if FILTER_LABELS:
@@ -141,28 +147,83 @@ def is_allowed(container) -> bool:
     return any(labels.get(k) == v for k, v in FILTER_LABELS)
 
 
-def get_container(name: str):
+def get_container(name: str, allow_missing: bool = False):
     if not whitelist_ok():
         raise HTTPException(503, "No whitelist configured")
     if not name or "/" in name or ".." in name:
         raise HTTPException(400, "Invalid container name")
-    try:
-        c = client().containers.get(name)
-    except NotFound:
-        raise HTTPException(404, "Container not found") from None
-    except DockerException as e:
-        raise HTTPException(502, f"Docker error: {e}") from e
-    if is_protected(c):
+
+    allowed_by_name = name in ALLOWED_NAMES
+    if name in EXCLUDE_NAMES or name in SELF_IDS:
         logger.warning("Blocked protected container: %s", name)
         raise HTTPException(403, "This dashboard cannot manage its own container")
-    if not is_allowed(c):
-        logger.warning("Blocked unauthorized container: %s", name)
-        raise HTTPException(403, "Not allowed")
-    return c
+
+    container = None
+    try:
+        container = client().containers.get(name)
+    except NotFound:
+        if not allow_missing:
+            raise HTTPException(404, "Container not found") from None
+    except DockerException as e:
+        raise HTTPException(502, f"Docker error: {e}") from e
+
+    if container is not None:
+        if is_protected(container):
+            logger.warning("Blocked protected container: %s", name)
+            raise HTTPException(403, "This dashboard cannot manage its own container")
+        if not allowed_by_name and not is_allowed(container):
+            logger.warning("Blocked unauthorized container: %s", name)
+            raise HTTPException(403, "Not allowed")
+    elif not allowed_by_name:
+        raise HTTPException(404, "Container not found")
+
+    return container
 
 
 # Coolify appends a long random id: my-app-ae3esvwu63r3yxju2369ywwk
 _COOLIFY_SUFFIX = re.compile(r"^(?P<base>.+)-(?P<id>[a-z0-9]{12,})$")
+
+
+def coolify_enabled() -> bool:
+    return bool(COOLIFY_API_URL and COOLIFY_API_TOKEN)
+
+
+def coolify_uuid(name: str) -> str | None:
+    m = _COOLIFY_SUFFIX.match(name or "")
+    if m:
+        return m.group("id")
+    return None
+
+
+def coolify_deploy(uuid: str) -> dict:
+    params = urlencode({"uuid": uuid, "force": "true" if COOLIFY_FORCE else "false"})
+    url = f"{COOLIFY_API_URL}/api/v1/deploy?{params}"
+    req = urllib.request.Request(
+        url,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {COOLIFY_API_TOKEN}",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            if not body:
+                return {"ok": True, "status": resp.status}
+            return json.loads(body)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        detail = body or str(e)
+        try:
+            payload = json.loads(body) if body else {}
+            if isinstance(payload, dict):
+                detail = payload.get("message") or payload.get("error") or detail
+        except json.JSONDecodeError:
+            pass
+        raise HTTPException(e.code, f"Deploy failed: {detail}") from e
+    except urllib.error.URLError as e:
+        raise HTTPException(502, f"Deploy API unreachable: {e.reason}") from e
 
 
 def display_name(name: str) -> str:
@@ -264,6 +325,7 @@ async def dashboard(request: Request):
             "app_title": APP_TITLE,
             "app_subtitle": APP_SUBTITLE,
             "log_tail": LOG_TAIL,
+            "coolify_enabled": coolify_enabled(),
         },
     )
 
@@ -286,6 +348,25 @@ async def action(container: str = Form(...), action: str = Form(...)):
     return RedirectResponse(url=f"/?message={quote(msg, safe='')}", status_code=303)
 
 
+@app.post("/api/deploy/{name}")
+async def api_deploy(name: str):
+    if not coolify_enabled():
+        raise HTTPException(503, "Deploy fallback is not configured")
+    # Allow missing local container because Coolify GC may have removed it.
+    get_container(name, allow_missing=True)
+    uuid = coolify_uuid(name)
+    if not uuid:
+        raise HTTPException(400, "Could not determine deploy UUID from container name")
+    try:
+        result = coolify_deploy(uuid)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Coolify deploy failed: %s", e)
+        raise HTTPException(502, f"Deploy failed: {e}") from e
+    return {"container": name, "uuid": uuid, "result": result}
+
+
 @app.get("/api/logs/{name}")
 async def api_logs(name: str, tail: int = LOG_TAIL):
     c = get_container(name)
@@ -306,4 +387,9 @@ async def health():
     except Exception as e:
         logger.warning("Docker ping failed: %s", e)
         ok = False
-    return {"status": "ok" if ok else "degraded", "docker": ok, "whitelist": whitelist_ok()}
+    return {
+        "status": "ok" if ok else "degraded",
+        "docker": ok,
+        "whitelist": whitelist_ok(),
+        "coolify": coolify_enabled(),
+    }

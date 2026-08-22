@@ -12,6 +12,10 @@ services:
       # Never show/manage these. Self is also auto-detected.
       - EXCLUDE_CONTAINERS=${EXCLUDE_CONTAINERS:-container-ui}
       - LOG_TAIL=200
+      # Coolify API deploy fallback (optional)
+      - COOLIFY_API_URL=${COOLIFY_API_URL:-}
+      - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN:-}
+      - COOLIFY_FORCE=${COOLIFY_FORCE:-false}
     # # Prefer reverse-proxy auth; do not publish this port publicly without auth
     # ports:
     #   - "8080:8080"
