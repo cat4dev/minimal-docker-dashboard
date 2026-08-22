@@ -14,6 +14,31 @@
   const empty = $("filter-empty");
   const toast = $("toast");
 
+  const showToast = (msg, isError) => {
+    $("toast")?.remove();
+    const div = document.createElement("div");
+    div.id = "toast";
+    div.className = `toast ${isError ? "toast-err" : "toast-ok"}`;
+    div.setAttribute("role", "status");
+    const span = document.createElement("span");
+    span.className = "toast-msg";
+    span.textContent = msg;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-close";
+    close.setAttribute("aria-label", "Dismiss");
+    close.textContent = "✕";
+    close.addEventListener("click", () => div.remove());
+    div.appendChild(span);
+    div.appendChild(close);
+    const wrap = document.querySelector(".wrap");
+    if (wrap) {
+      const header = wrap.querySelector(".header");
+      header ? header.after(div) : wrap.prepend(div);
+    }
+    setTimeout(() => div.remove(), 8000);
+  };
+
   // Auto-refresh (skip while logs open)
   const setAuto = (on) => {
     clearInterval(timer);
@@ -123,4 +148,28 @@
     if (e.key === "Escape" && modal && !modal.classList.contains("hidden")) closeModal();
   });
   $("log-reload")?.addEventListener("click", () => logTarget && loadLogs(logTarget));
+
+  // Deploy fallback (button is only rendered when configured)
+  document.querySelectorAll(".deploy-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.name || "";
+      if (!name) return;
+      if (!confirm(`Deploy ${name}? This rebuilds the container and its network.`)) return;
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Deploying…";
+      try {
+        const res = await fetch("/api/deploy/" + encodeURIComponent(name), { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || `HTTP ${res.status}`);
+        }
+        showToast(`Deploy requested for ${name}. Redeploy in progress — refresh to see updates.`, false);
+      } catch (e) {
+        showToast(`Deploy failed: ${e.message}`, true);
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    });
+  });
 })();
