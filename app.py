@@ -106,7 +106,6 @@ APP_SUBTITLE = os.getenv("APP_SUBTITLE", "Managed access dashboard")
 LOG_TAIL = max(1, min(int(os.getenv("LOG_TAIL", "200")), 2000))
 COOLIFY_API_URL = os.getenv("COOLIFY_API_URL", "").rstrip("/")
 COOLIFY_API_TOKEN = os.getenv("COOLIFY_API_TOKEN", "")
-COOLIFY_FORCE = os.getenv("COOLIFY_FORCE", "false").lower() in ("1", "true", "yes")
 # Coolify compose project names (com.docker.compose.project). Deploy allowlist +
 # watchlist: a project here always gets a card, even when its containers are gone.
 COOLIFY_PROJECTS = _csv_set("COOLIFY_PROJECTS")
@@ -202,7 +201,10 @@ def coolify_enabled() -> bool:
 
 
 def coolify_deploy(project: str) -> dict:
-    params = urlencode({"uuid": project, "force": "true" if COOLIFY_FORCE else "false"})
+    # Always force: the fallback's whole point is bringing back GC'd/removed
+    # containers, where a polite deploy can fail with "deployment in progress"
+    # or "nothing to deploy" guards.
+    params = urlencode({"uuid": project, "force": "true"})
     url = f"{COOLIFY_API_URL}/api/v1/deploy?{params}"
     req = urllib.request.Request(
         url,

@@ -17,7 +17,6 @@ services:
       # (projects always rendered, even when GC removed their containers).
       - COOLIFY_API_URL=${COOLIFY_API_URL:-}
       - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN:-}
-      - COOLIFY_FORCE=${COOLIFY_FORCE:-false}
       - COOLIFY_PROJECTS=${COOLIFY_PROJECTS:-}
     # # Prefer reverse-proxy auth; do not publish this port publicly without auth
     # ports:

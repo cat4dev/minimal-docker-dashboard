@@ -53,9 +53,10 @@ Set in `.env`:
 ```env
 COOLIFY_API_URL=http://192.168.1.11:8000
 COOLIFY_API_TOKEN=your-deploy-only-token
-COOLIFY_FORCE=false
 COOLIFY_PROJECTS=cat4dev,core
 ```
+
+- The single **Deploy** button per project always force-deploys (`force=true`), because it exists to bring back GC'd/removed containers — a polite deploy can refuse while a deployment is in progress.
 
 - `COOLIFY_PROJECTS` is the deploy **allowlist**: only these project names can be redeployed (`POST /api/v1/deploy?uuid=<project>`).
 - It is also a **watchlist**: each project always gets a card. If Docker has no containers for it (GC removed them), the card shows **Missing** with a Deploy button to bring it back.
