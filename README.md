@@ -38,12 +38,15 @@ Tiny FastAPI + Jinja dashboard: whitelist-only container restart / stop / start 
 - Status badges (running / stopped / restarting / paused)
 - Branding: `APP_TITLE`, `APP_SUBTITLE`
 - Log length: `LOG_TAIL` (default 200, max 2000)
-- **Coolify deploy fallback**: redeploy stopped containers through the Coolify API when local Docker start fails (e.g. missing network after GC)
+- **Coolify deploy fallback**: redeploy by compose **project name** through the Coolify API (`COOLIFY_PROJECTS` allowlist); GC-removed projects stay visible as "Missing" cards with a Deploy button
 - **No CDN**: local CSS/JS only (no Tailwind runtime / `eval`), basic CSP headers
 
 ## Coolify deploy fallback
 
-If Coolify garbage collection removes a stopped container’s network (so Docker Start fails), you can redeploy from the dashboard via the Coolify API.
+If Coolify garbage collection removes a project's stopped containers (or their
+network), you can redeploy it from the dashboard via the Coolify API. Deploy is
+keyed on the **compose project name** (`com.docker.compose.project` label), not
+the container name, so it still works when the containers no longer exist.
 
 Set in `.env`:
 
@@ -51,11 +54,13 @@ Set in `.env`:
 COOLIFY_API_URL=http://192.168.1.11:8000
 COOLIFY_API_TOKEN=your-deploy-only-token
 COOLIFY_FORCE=false
+COOLIFY_PROJECTS=cat4dev,core
 ```
 
-- The UUID is extracted automatically from the Coolify container name suffix (`my-app-ae3esvwu63r3yxju2369ywwk`).
-- The **Deploy** button appears only on stopped containers.
-- The deploy request is fire-and-forget; use Refresh or auto-refresh to watch the container come back.
+- `COOLIFY_PROJECTS` is the deploy **allowlist**: only these compose project names can be redeployed (`POST /api/v1/deploy?uuid=<project>`).
+- It is also a **watchlist**: each project always gets a card. If Docker has no containers for it (GC removed them), the card shows **Missing** with a Deploy button to bring it back.
+- For live projects, every card from that project gets a Deploy button.
+- The deploy request is fire-and-forget; use Refresh or auto-refresh to watch the containers come back.
 
 ## Security
 

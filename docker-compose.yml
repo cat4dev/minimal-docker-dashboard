@@ -12,10 +12,13 @@ services:
       # Never show/manage these. Self is also auto-detected.
       - EXCLUDE_CONTAINERS=${EXCLUDE_CONTAINERS:-container-ui}
       - LOG_TAIL=200
-      # Coolify API deploy fallback (optional)
+      # Coolify API deploy fallback (optional). Deploy is keyed on compose
+      # project name; COOLIFY_PROJECTS is the deploy allowlist + watchlist
+      # (projects always rendered, even when GC removed their containers).
       - COOLIFY_API_URL=${COOLIFY_API_URL:-}
       - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN:-}
       - COOLIFY_FORCE=${COOLIFY_FORCE:-false}
+      - COOLIFY_PROJECTS=${COOLIFY_PROJECTS:-}
     # # Prefer reverse-proxy auth; do not publish this port publicly without auth
     # ports:
     #   - "8080:8080"

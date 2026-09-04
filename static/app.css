@@ -433,6 +433,15 @@ button:disabled {
   background: var(--amber);
 }
 
+.badge-missing {
+  background: rgb(69 10 10 / 0.8);
+  color: var(--red-text);
+  border-color: rgb(127 29 29 / 0.5);
+}
+.badge-missing .dot {
+  background: #f87171;
+}
+
 .badge-transition {
   background: rgb(8 51 68 / 0.8);
   color: #67e8f9;

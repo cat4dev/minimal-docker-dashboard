@@ -149,22 +149,22 @@
   });
   $("log-reload")?.addEventListener("click", () => logTarget && loadLogs(logTarget));
 
-  // Deploy fallback (button is only rendered when configured)
+  // Deploy fallback (button is only rendered for allowlisted Coolify projects)
   document.querySelectorAll(".deploy-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const name = btn.dataset.name || "";
-      if (!name) return;
-      if (!confirm(`Deploy ${name}? This rebuilds the container and its network.`)) return;
+      const project = btn.dataset.project || "";
+      if (!project) return;
+      if (!confirm(`Deploy project "${project}" via Coolify? This rebuilds its containers and network.`)) return;
       const prev = btn.textContent;
       btn.disabled = true;
       btn.textContent = "Deploying…";
       try {
-        const res = await fetch("/api/deploy/" + encodeURIComponent(name), { method: "POST" });
+        const res = await fetch("/api/deploy/" + encodeURIComponent(project), { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           throw new Error(data.detail || `HTTP ${res.status}`);
         }
-        showToast(`Deploy requested for ${name}. Redeploy in progress — refresh to see updates.`, false);
+        showToast(`Deploy requested for project ${project}. Redeploy in progress — refresh to see updates.`, false);
       } catch (e) {
         showToast(`Deploy failed: ${e.message}`, true);
         btn.disabled = false;

@@ -107,10 +107,15 @@ LOG_TAIL = max(1, min(int(os.getenv("LOG_TAIL", "200")), 2000))
 COOLIFY_API_URL = os.getenv("COOLIFY_API_URL", "").rstrip("/")
 COOLIFY_API_TOKEN = os.getenv("COOLIFY_API_TOKEN", "")
 COOLIFY_FORCE = os.getenv("COOLIFY_FORCE", "false").lower() in ("1", "true", "yes")
+# Coolify compose project names (com.docker.compose.project). Deploy allowlist +
+# watchlist: a project here always gets a card, even when its containers are gone.
+COOLIFY_PROJECTS = _csv_set("COOLIFY_PROJECTS")
 SELF_IDS = _self_ids()
 
 if FILTER_LABELS:
     logger.info("FILTER_LABEL (OR): %s", FILTER_LABELS)
+if COOLIFY_PROJECTS:
+    logger.info("COOLIFY_PROJECTS (deploy/watch): %s", sorted(COOLIFY_PROJECTS))
 if SELF_IDS or EXCLUDE_NAMES:
     logger.info("Protected: self=%s exclude=%s", sorted(SELF_IDS)[:4], sorted(EXCLUDE_NAMES))
 
@@ -125,7 +130,7 @@ def client() -> docker.DockerClient:
 
 
 def whitelist_ok() -> bool:
-    return bool(ALLOWED_NAMES or FILTER_LABELS)
+    return bool(ALLOWED_NAMES or FILTER_LABELS or COOLIFY_PROJECTS)
 
 
 def is_protected(container) -> bool:
@@ -136,47 +141,46 @@ def is_protected(container) -> bool:
     return bool(SELF_IDS & {name, cid, cid[:12]})
 
 
+def _project_of(container) -> str | None:
+    return (container.labels or {}).get("com.docker.compose.project")
+
+
 def is_allowed(container) -> bool:
     if is_protected(container):
         return False
     if container.name in ALLOWED_NAMES:
         return True
+    labels = container.labels or {}
+    if (_project_of(container) or "") in COOLIFY_PROJECTS:
+        return True
     if not FILTER_LABELS:
         return False
-    labels = container.labels or {}
     return any(labels.get(k) == v for k, v in FILTER_LABELS)
 
 
-def get_container(name: str, allow_missing: bool = False):
+def get_container(name: str):
     if not whitelist_ok():
         raise HTTPException(503, "No whitelist configured")
     if not name or "/" in name or ".." in name:
         raise HTTPException(400, "Invalid container name")
 
-    allowed_by_name = name in ALLOWED_NAMES
     if name in EXCLUDE_NAMES or name in SELF_IDS:
         logger.warning("Blocked protected container: %s", name)
         raise HTTPException(403, "This dashboard cannot manage its own container")
 
-    container = None
     try:
         container = client().containers.get(name)
     except NotFound:
-        if not allow_missing:
-            raise HTTPException(404, "Container not found") from None
+        raise HTTPException(404, "Container not found") from None
     except DockerException as e:
         raise HTTPException(502, f"Docker error: {e}") from e
 
-    if container is not None:
-        if is_protected(container):
-            logger.warning("Blocked protected container: %s", name)
-            raise HTTPException(403, "This dashboard cannot manage its own container")
-        if not allowed_by_name and not is_allowed(container):
-            logger.warning("Blocked unauthorized container: %s", name)
-            raise HTTPException(403, "Not allowed")
-    elif not allowed_by_name:
-        raise HTTPException(404, "Container not found")
-
+    if is_protected(container):
+        logger.warning("Blocked protected container: %s", name)
+        raise HTTPException(403, "This dashboard cannot manage its own container")
+    if not is_allowed(container):
+        logger.warning("Blocked unauthorized container: %s", name)
+        raise HTTPException(403, "Not allowed")
     return container
 
 
@@ -188,15 +192,8 @@ def coolify_enabled() -> bool:
     return bool(COOLIFY_API_URL and COOLIFY_API_TOKEN)
 
 
-def coolify_uuid(name: str) -> str | None:
-    m = _COOLIFY_SUFFIX.match(name or "")
-    if m:
-        return m.group("id")
-    return None
-
-
-def coolify_deploy(uuid: str) -> dict:
-    params = urlencode({"uuid": uuid, "force": "true" if COOLIFY_FORCE else "false"})
+def coolify_deploy(project: str) -> dict:
+    params = urlencode({"uuid": project, "force": "true" if COOLIFY_FORCE else "false"})
     url = f"{COOLIFY_API_URL}/api/v1/deploy?{params}"
     req = urllib.request.Request(
         url,
@@ -263,9 +260,12 @@ def _card(c) -> dict | None:
         state = (c.attrs or {}).get("State") or {}
         status = c.status or "unknown"
         full = c.name
+        project = _project_of(c)
         return {
             "name": full,  # full Docker name (forms / API)
             "display_name": display_name(full),
+            "project": project,
+            "deployable": project in COOLIFY_PROJECTS,
             "status": status,
             "running": status.lower() == "running",
             "image": short_image(image),
@@ -278,33 +278,43 @@ def _card(c) -> dict | None:
         return None
 
 
+def _card_missing(project: str) -> dict:
+    """Placeholder for a COOLIFY_PROJECTS project Docker can no longer find
+    (e.g. its containers were removed by Coolify GC), kept visible so its
+    Deploy button survives."""
+    return {
+        "name": project,
+        "display_name": display_name(project),
+        "project": project,
+        "deployable": True,
+        "status": "missing",
+        "running": False,
+        "image": "",
+        "image_full": "",
+        "health": None,
+        "exit_code": None,
+    }
+
+
 def list_allowed() -> list[dict]:
     if not whitelist_ok():
         logger.warning("No whitelist configured — empty list")
         return []
 
-    by_name: dict = {}
     try:
-        d = client()
-        # One Docker call per label pair (API ANDs labels in a single filter)
-        for key, val in FILTER_LABELS:
-            try:
-                for c in d.containers.list(all=True, filters={"label": [f"{key}={val}"]}):
-                    by_name[c.name] = c
-            except DockerException as e:
-                logger.warning("Label filter %s=%s failed: %s", key, val, e)
-        for name in ALLOWED_NAMES - by_name.keys():
-            try:
-                by_name[name] = d.containers.get(name)
-            except NotFound:
-                pass
-            except DockerException as e:
-                logger.warning("Lookup %s failed: %s", name, e)
+        # One Docker call; whitelist is enforced in Python (all=True includes
+        # stopped/created, so ALLOWED_NAMES need no per-name lookups).
+        by_name = {
+            c.name: c for c in client().containers.list(all=True) if is_allowed(c)
+        }
     except DockerException as e:
         logger.error("Docker list failed: %s", e)
         return []
 
-    out = [card for c in by_name.values() if is_allowed(c) and (card := _card(c))]
+    out = [card for c in by_name.values() if (card := _card(c))]
+    present = {card["project"] for card in out if card["project"]}
+    if coolify_enabled():
+        out += [_card_missing(p) for p in COOLIFY_PROJECTS - present]
     out.sort(key=lambda x: x["name"].lower())
     return out
 
@@ -348,29 +358,32 @@ async def action(container: str = Form(...), action: str = Form(...)):
     return RedirectResponse(url=f"/?message={quote(msg, safe='')}", status_code=303)
 
 
-@app.post("/api/deploy/{name}")
-async def api_deploy(name: str):
+@app.post("/api/deploy/{project}")
+async def api_deploy(project: str):
     if not coolify_enabled():
         raise HTTPException(503, "Deploy fallback is not configured")
-    # Allow missing local container because Coolify GC may have removed it.
-    get_container(name, allow_missing=True)
-    uuid = coolify_uuid(name)
-    if not uuid:
-        raise HTTPException(400, "Could not determine deploy UUID from container name")
+    if not project or "/" in project or ".." in project:
+        raise HTTPException(400, "Invalid project name")
+    if project not in COOLIFY_PROJECTS:
+        logger.warning("Blocked deploy for unauthorized project: %s", project)
+        raise HTTPException(403, "Project not in deploy allowlist")
     try:
-        result = coolify_deploy(uuid)
+        result = coolify_deploy(project)
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Coolify deploy failed: %s", e)
         raise HTTPException(502, f"Deploy failed: {e}") from e
-    return {"container": name, "uuid": uuid, "result": result}
+    return {"project": project, "result": result}
 
 
 @app.get("/api/logs/{name}")
 async def api_logs(name: str, tail: int = LOG_TAIL):
     c = get_container(name)
-    n = max(1, min(int(tail), 2000))
+    try:
+        n = max(1, min(int(tail), 2000))
+    except ValueError:
+        n = LOG_TAIL
     try:
         raw = c.logs(tail=n, timestamps=True)
     except DockerException as e:

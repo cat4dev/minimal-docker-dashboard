@@ -60,10 +60,12 @@
                             <h3 class="mono" title="{{ c.name }}">{{ c.display_name }}</h3>
                             <button type="button" class="copy-btn" data-name="{{ c.name }}" title="Copy full name: {{ c.name }}" aria-label="Copy full container name">⧉</button>
                         </div>
-                        <div class="image-line mono" title="{{ c.image_full }}">{{ c.image }}</div>
+                        <div class="image-line mono" title="{{ c.image_full }}">{% if c.status == 'missing' %}removed by GC — not in Docker{% else %}{{ c.image }}{% endif %}</div>
                     </div>
                     {% if c.running %}
                     <span class="badge badge-running"><span class="dot"></span> Running</span>
+                    {% elif c.status == 'missing' %}
+                    <span class="badge badge-missing"><span class="dot"></span> Missing</span>
                     {% elif c.status|lower in ('restarting', 'created') %}
                     <span class="badge badge-transition"><span class="dot"></span> {{ c.status|capitalize }}</span>
                     {% elif c.status|lower == 'paused' %}
@@ -79,7 +81,10 @@
                     {% if not c.running and c.exit_code is not none %}<span class="sep"> · </span>exit {{ c.exit_code }}{% endif %}
                 </div>
 
-                <div class="actions">
+<div class="actions">
+                    {% if c.status == 'missing' %}
+                    <button type="button" class="btn btn-deploy deploy-btn" data-project="{{ c.project }}">Deploy</button>
+                    {% else %}
                     <form method="post" action="/action" class="act-form">
                         <input type="hidden" name="container" value="{{ c.name }}">
                         <input type="hidden" name="action" value="restart">
@@ -97,11 +102,12 @@
                         <input type="hidden" name="action" value="start">
                         <button type="submit" class="btn btn-start">Start</button>
                     </form>
-                    {% if coolify_enabled %}
-                    <button type="button" class="btn btn-deploy deploy-btn" data-name="{{ c.name }}">Deploy</button>
                     {% endif %}
+                    {% if c.deployable and coolify_enabled %}
+                    <button type="button" class="btn btn-deploy deploy-btn" data-project="{{ c.project }}" title="Redeploy via Coolify">Deploy</button>
                     {% endif %}
                     <button type="button" class="btn-logs logs-btn" data-name="{{ c.name }}" title="View logs">Logs</button>
+                    {% endif %}
                 </div>
             </article>
             {% endfor %}
