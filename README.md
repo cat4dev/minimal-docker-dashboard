@@ -30,7 +30,7 @@ Tiny FastAPI + Jinja dashboard: whitelist-only container restart / stop / start 
 
 ## Features
 
-- Whitelist by **name** and/or **label(s)** (union; multiple labels = OR)
+- Whitelist by **name** and/or **label(s)** and/or **Coolify project** (`COOLIFY_PROJECTS`; union, multiple projects = OR)
 - **Self-protect**: this UI container is never listed or stop/restart/start/logs’d (auto-detect + `EXCLUDE_CONTAINERS`)
 - Restart / Stop / Start (enforced server-side)
 - Logs modal (last N lines, timestamps)
@@ -57,9 +57,11 @@ COOLIFY_FORCE=false
 COOLIFY_PROJECTS=cat4dev,core
 ```
 
-- `COOLIFY_PROJECTS` is the deploy **allowlist**: only these compose project names can be redeployed (`POST /api/v1/deploy?uuid=<project>`).
+- `COOLIFY_PROJECTS` is the deploy **allowlist**: only these project names can be redeployed (`POST /api/v1/deploy?uuid=<project>`).
 - It is also a **watchlist**: each project always gets a card. If Docker has no containers for it (GC removed them), the card shows **Missing** with a Deploy button to bring it back.
+- The project is read from the container's `coolify.projectName` label (or `com.docker.compose.project`); either is accepted.
 - For live projects, every card from that project gets a Deploy button.
+- `FILTER_LABEL` is optional and separate: you only need it to *show* containers you don't intend to redeploy, or to OR in extra non-project labels. Projects in `COOLIFY_PROJECTS` are already visible.
 - The deploy request is fire-and-forget; use Refresh or auto-refresh to watch the containers come back.
 
 ## Security

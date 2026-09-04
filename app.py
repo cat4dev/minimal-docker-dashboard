@@ -141,8 +141,17 @@ def is_protected(container) -> bool:
     return bool(SELF_IDS & {name, cid, cid[:12]})
 
 
+# Label keys that identify a Coolify project. Coolify sets coolify.projectName;
+# plain docker compose sets com.docker.compose.project.
+_PROJECT_LABEL_KEYS = ("coolify.projectName", "com.docker.compose.project")
+
+
 def _project_of(container) -> str | None:
-    return (container.labels or {}).get("com.docker.compose.project")
+    labels = container.labels or {}
+    for key in _PROJECT_LABEL_KEYS:
+        if labels.get(key):
+            return labels[key]
+    return None
 
 
 def is_allowed(container) -> bool:
