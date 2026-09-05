@@ -149,12 +149,11 @@
   });
   $("log-reload")?.addEventListener("click", () => logTarget && loadLogs(logTarget));
 
-  // Deploy fallback (button is only rendered for allowlisted Coolify projects)
+  // Deploy fallback (button is only rendered for allowlisted projects)
   document.querySelectorAll(".deploy-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const project = btn.dataset.project || "";
       if (!project) return;
-      if (!confirm(`Deploy project "${project}" via Coolify? This rebuilds its containers and network.`)) return;
       const prev = btn.textContent;
       btn.disabled = true;
       btn.textContent = "Deploying…";

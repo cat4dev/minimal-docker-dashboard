@@ -58,6 +58,7 @@ COOLIFY_PROJECTS=cat4dev,core
 
 - The single **Deploy** button per project always force-deploys (`force=true`), because it exists to bring back GC'd/removed containers — a polite deploy can refuse while a deployment is in progress.
 - The token needs at least the **deploy** ability. If containers have been garbage-collected and no live container exists for the project, the token also needs the **read** ability so the dashboard can resolve the project name to Coolify resource UUIDs.
+- If automatic resolution keeps failing, set `COOLIFY_RESOURCE_UUIDS` to bypass discovery: `COOLIFY_RESOURCE_UUIDS=cat4dev:app-uuid-1,app-uuid-2;core:core-uuid-1`.
 
 - `COOLIFY_PROJECTS` is the deploy **allowlist**: only these project names can be redeployed. The dashboard resolves each project to its Coolify resource UUIDs and calls `POST /api/v1/deploy?uuid=<resource-uuids>&force=true`.
 - It is also a **watchlist**: each project always gets a card. If Docker has no containers for it (GC removed them), the card shows **Missing** with a Deploy button to bring it back.
@@ -73,6 +74,13 @@ COOLIFY_PROJECTS=cat4dev,core
 - Empty whitelist → empty UI and blocked actions
 - Dashboard cannot manage itself (avoids lock-out via Stop/Restart)
 - Coolify API token is sent in the `Authorization` header and is never logged
+
+## Testing
+
+```bash
+pip install -r requirements-test.txt
+pytest tests/test_app.py -v
+```
 
 ## Troubleshooting
 

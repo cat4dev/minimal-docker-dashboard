@@ -79,6 +79,11 @@ def _parse_labels(raw: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def _slugify(name: str) -> str:
+    """Normalize a project name the same way Coolify does (Str::slug)."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
 def _self_ids() -> set[str]:
     """This container's id/name so we never manage ourselves."""
     ids: set[str] = set()
@@ -109,6 +114,30 @@ COOLIFY_API_TOKEN = os.getenv("COOLIFY_API_TOKEN", "")
 # Coolify compose project names (com.docker.compose.project). Deploy allowlist +
 # watchlist: a project here always gets a card, even when its containers are gone.
 COOLIFY_PROJECTS = _csv_set("COOLIFY_PROJECTS")
+COOLIFY_PROJECTS_SLUGS = {_slugify(p) for p in COOLIFY_PROJECTS}
+
+
+def _parse_resource_uuids(raw: str) -> dict[str, list[str]]:
+    """COOLIFY_RESOURCE_UUIDS: project:uuid1,uuid2;project2:uuid3."""
+    mapping: dict[str, list[str]] = {}
+    for project_block in raw.split(";"):
+        project_block = project_block.strip()
+        if not project_block:
+            continue
+        if ":" not in project_block:
+            logger.error("COOLIFY_RESOURCE_UUIDS entry must be project:uuid,uuid, got %r", project_block)
+            continue
+        name, uuids = project_block.split(":", 1)
+        name = name.strip()
+        uuids = [u.strip() for u in uuids.split(",") if u.strip()]
+        if name and uuids:
+            mapping[_slugify(name)] = uuids
+    return mapping
+
+
+# Optional manual override: project name -> list of Coolify resource UUIDs.
+# Used when automatic resolution fails or the API token has no read ability.
+COOLIFY_RESOURCE_UUIDS = _parse_resource_uuids(os.getenv("COOLIFY_RESOURCE_UUIDS", ""))
 SELF_IDS = _self_ids()
 
 if FILTER_LABELS:
@@ -159,7 +188,8 @@ def is_allowed(container) -> bool:
     if container.name in ALLOWED_NAMES:
         return True
     labels = container.labels or {}
-    if (_project_of(container) or "") in COOLIFY_PROJECTS:
+    container_project = _project_of(container)
+    if container_project and _slugify(container_project) in COOLIFY_PROJECTS_SLUGS:
         return True
     if not FILTER_LABELS:
         return False
@@ -233,11 +263,14 @@ def _coolify_project_uuid(name: str) -> str | None:
     """Resolve a Coolify project name to its UUID."""
     projects = _coolify_request("/projects")
     if not isinstance(projects, list):
+        logger.warning("Coolify /projects did not return a list: %s", type(projects).__name__)
         return None
-    name_slug = name.lower()
+    name_slug = _slugify(name)
     for project in projects:
-        if isinstance(project, dict) and project.get("name", "").lower() == name_slug:
+        if isinstance(project, dict) and _slugify(project.get("name", "")) == name_slug:
+            logger.info("Resolved Coolify project '%s' -> uuid %s", name, project.get("uuid"))
             return project.get("uuid")
+    logger.warning("Coolify project '%s' not found in %d projects", name, len(projects))
     return None
 
 
@@ -245,6 +278,11 @@ def _coolify_resource_uuids(project_uuid: str) -> list[str]:
     """Return all deployable resource UUIDs inside a Coolify project."""
     environments = _coolify_request(f"/projects/{quote(project_uuid, safe='')}/environments")
     if not isinstance(environments, list):
+        logger.warning(
+            "Coolify /projects/%s/environments did not return a list: %s",
+            project_uuid,
+            type(environments).__name__,
+        )
         return []
 
     uuids: list[str] = []
@@ -267,11 +305,18 @@ def _coolify_resource_uuids(project_uuid: str) -> list[str]:
             f"/projects/{quote(project_uuid, safe='')}/{quote(env_id, safe='')}"
         )
         if not isinstance(details, dict):
+            logger.warning(
+                "Coolify /projects/%s/%s did not return an object: %s",
+                project_uuid,
+                env_id,
+                type(details).__name__,
+            )
             continue
         for key in resource_keys:
             for resource in details.get(key, []) or []:
                 if isinstance(resource, dict) and resource.get("uuid"):
                     uuids.append(resource["uuid"])
+    logger.info("Resolved project uuid %s -> resource uuids: %s", project_uuid, uuids)
     return uuids
 
 
@@ -287,37 +332,50 @@ def _container_resource_uuids(project: str) -> list[str]:
         logger.warning("Docker list failed during deploy resolution: %s", e)
         return []
 
-    project_slug = project.lower()
+    project_slug = _slugify(project)
     uuids: set[str] = set()
+    matched = 0
     for c in containers:
         labels = c.labels or {}
         container_project = labels.get("coolify.projectName") or labels.get("com.docker.compose.project")
-        if not container_project or container_project.lower() != project_slug:
+        if not container_project or _slugify(container_project) != project_slug:
             continue
+        matched += 1
         m = _COOLIFY_SUFFIX.match(c.name or "")
         if m:
             uuids.add(m.group("id"))
+    logger.info(
+        "Container scan for project '%s': %d matched containers, uuids: %s",
+        project,
+        matched,
+        sorted(uuids),
+    )
     return sorted(uuids)
 
 
 def coolify_deploy(project: str) -> dict:
     # The /deploy endpoint expects Coolify *resource* UUIDs, not the project
-    # name. First try to read the UUIDs from live container names (works with
-    # a deploy-only API token). If the containers have been GC'd, fall back to
-    # resolving the project via the Coolify API (requires read ability).
-    resource_uuids = _container_resource_uuids(project)
-    source = "containers"
+    # name. Resolution order:
+    #   1. Manual override from COOLIFY_RESOURCE_UUIDS.
+    #   2. Live container names (works with a deploy-only API token).
+    #   3. Coolify project/environment API (requires read ability).
+    project_slug = _slugify(project)
+    resource_uuids = COOLIFY_RESOURCE_UUIDS.get(project_slug, [])
+    source = "manual"
+    if not resource_uuids:
+        resource_uuids = _container_resource_uuids(project)
+        source = "containers"
     if not resource_uuids:
         project_uuid = _coolify_project_uuid(project)
         if not project_uuid:
-            raise HTTPException(404, f"Coolify project '{project}' not found")
+            raise HTTPException(404, f"Project '{project}' not found")
         resource_uuids = _coolify_resource_uuids(project_uuid)
         source = "api"
 
     if not resource_uuids:
         raise HTTPException(404, f"No deployable resources in project '{project}'")
 
-    logger.info("Deploying project '%s' via %s: %s", project, source, resource_uuids)
+    logger.info("Deploying project '%s' via %s with uuids: %s", project, source, resource_uuids)
     params = urlencode({"uuid": ",".join(resource_uuids), "force": "true"})
     url = f"{COOLIFY_API_URL}/api/v1/deploy?{params}"
     req = urllib.request.Request(
@@ -343,7 +401,8 @@ def coolify_deploy(project: str) -> dict:
                 detail = payload.get("message") or payload.get("error") or detail
         except json.JSONDecodeError:
             pass
-        raise HTTPException(e.code, f"Deploy failed: {detail}") from e
+        # The frontend already prefixes its own "Deploy failed:" label.
+        raise HTTPException(e.code, detail) from e
     except urllib.error.URLError as e:
         raise HTTPException(502, f"Deploy API unreachable: {e.reason}") from e
 
@@ -541,7 +600,7 @@ if __name__ == "__main__":
         assert method == "GET", method
         if path == "/projects":
             return [
-                {"uuid": "proj-uuid-1", "name": "buyer-maxim"},
+                {"uuid": "proj-uuid-1", "name": "cat4dev"},
                 {"uuid": "proj-uuid-2", "name": "core"},
             ]
         if path == "/projects/proj-uuid-1/environments":
@@ -555,7 +614,7 @@ if __name__ == "__main__":
         raise AssertionError(f"unexpected path: {path}")
 
     _coolify_request = _fake_request  # type: ignore[assignment]
-    assert _coolify_project_uuid("buyer-maxim") == "proj-uuid-1"
+    assert _coolify_project_uuid("cat4dev") == "proj-uuid-1"
     assert _coolify_project_uuid("CORE") == "proj-uuid-2"
     assert _coolify_project_uuid("missing") is None
     assert _coolify_resource_uuids("proj-uuid-1") == ["app-uuid-1", "db-uuid-1"]
