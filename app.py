@@ -223,7 +223,9 @@ def get_container(name: str):
 
 
 # Coolify appends a long random id: my-app-ae3esvwu63r3yxju2369ywwk
-_COOLIFY_SUFFIX = re.compile(r"^(?P<base>.+)-(?P<id>[a-z0-9]{12,})$")
+# Coolify UUIDs are 24 lowercase alphanumeric chars. We accept 20+ chars to
+# leave a little headroom, but reject plain numeric suffixes like container IDs.
+_COOLIFY_SUFFIX = re.compile(r"^(?P<base>.+)-(?P<id>[a-z0-9]{20,})$")
 
 
 def coolify_enabled() -> bool:
@@ -333,17 +335,26 @@ def _container_resource_uuids(project: str) -> list[str]:
         return []
 
     project_slug = _slugify(project)
+    protected = EXCLUDE_NAMES | SELF_IDS
     uuids: set[str] = set()
     matched = 0
     for c in containers:
+        name = c.name or ""
+        if name in protected:
+            continue
         labels = c.labels or {}
         container_project = labels.get("coolify.projectName") or labels.get("com.docker.compose.project")
         if not container_project or _slugify(container_project) != project_slug:
             continue
         matched += 1
-        m = _COOLIFY_SUFFIX.match(c.name or "")
+        m = _COOLIFY_SUFFIX.match(name)
         if m:
-            uuids.add(m.group("id"))
+            rid = m.group("id")
+            # Reject plain numeric IDs (e.g. container short IDs appended by Coolify).
+            if re.search(r"[a-z]", rid) and re.search(r"[0-9]", rid):
+                uuids.add(rid)
+            elif len(rid) >= 24:  # long enough to be a real Coolify UUID
+                uuids.add(rid)
     logger.info(
         "Container scan for project '%s': %d matched containers, uuids: %s",
         project,

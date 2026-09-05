@@ -82,22 +82,22 @@ def test_coolify_resource_uuids(monkeypatch):
 
 def test_container_resource_uuids_extracts_from_names(monkeypatch):
     fake_container = MagicMock()
-    fake_container.name = "web-app-uuid1suffix12345"
+    fake_container.name = "web-app-ae3esvwu63r3yxju2369ywwk"
     fake_container.labels = {"coolify.projectName": "cat4dev"}
 
     fake_container2 = MagicMock()
-    fake_container2.name = "worker-app-uuid1suffix12345"  # same resource
+    fake_container2.name = "worker-app-ae3esvwu63r3yxju2369ywwk"  # same resource
     fake_container2.labels = {"coolify.projectName": "cat4dev"}
 
     fake_other = MagicMock()
-    fake_other.name = "other-uuid2suffix12345"
+    fake_other.name = "other-bf4ftwxv74r4zxkv3470zxxl"
     fake_other.labels = {"coolify.projectName": "core"}
 
     fake_client = MagicMock()
     fake_client.containers.list.return_value = [fake_container, fake_container2, fake_other]
     monkeypatch.setattr("app._client", fake_client)
 
-    assert _container_resource_uuids("cat4dev") == ["uuid1suffix12345"]
+    assert _container_resource_uuids("cat4dev") == ["ae3esvwu63r3yxju2369ywwk"]
 
 
 def test_container_resource_uuids_falls_back_to_compose_label(monkeypatch):
@@ -108,6 +108,31 @@ def test_container_resource_uuids_falls_back_to_compose_label(monkeypatch):
     fake_client = MagicMock()
     fake_client.containers.list.return_value = [fake_container]
     monkeypatch.setattr("app._client", fake_client)
+
+    assert _container_resource_uuids("cat4dev") == []
+
+
+def test_container_resource_uuids_rejects_numeric_suffix(monkeypatch):
+    fake_container = MagicMock()
+    fake_container.name = "cat4dev-120010938234"  # numeric, not a Coolify UUID
+    fake_container.labels = {"coolify.projectName": "cat4dev"}
+
+    fake_client = MagicMock()
+    fake_client.containers.list.return_value = [fake_container]
+    monkeypatch.setattr("app._client", fake_client)
+
+    assert _container_resource_uuids("cat4dev") == []
+
+
+def test_container_resource_uuids_skips_protected_containers(monkeypatch):
+    fake_dashboard = MagicMock()
+    fake_dashboard.name = "container-ui-idxv1o12dfa23r3eyljabpfij7-120010938234"
+    fake_dashboard.labels = {"coolify.projectName": "cat4dev"}
+
+    fake_client = MagicMock()
+    fake_client.containers.list.return_value = [fake_dashboard]
+    monkeypatch.setattr("app._client", fake_client)
+    monkeypatch.setattr("app.EXCLUDE_NAMES", {"container-ui"})
 
     assert _container_resource_uuids("cat4dev") == []
 
