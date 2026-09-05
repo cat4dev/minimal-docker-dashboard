@@ -497,20 +497,41 @@ def list_allowed() -> list[dict]:
         return []
 
     try:
-        # One Docker call; whitelist is enforced in Python (all=True includes
-        # stopped/created, so ALLOWED_NAMES need no per-name lookups).
-        by_name = {
-            c.name: c for c in client().containers.list(all=True) if is_allowed(c)
-        }
+        all_containers = client().containers.list(all=True)
     except DockerException as e:
         logger.error("Docker list failed: %s", e)
         return []
 
+    # Debug logging: show every container Docker sees and why it is filtered.
+    for c in all_containers:
+        labels = c.labels or {}
+        project = _project_of(c)
+        reason = "allowed"
+        if is_protected(c):
+            reason = f"protected (exclude/self)"
+        elif c.name in ALLOWED_NAMES:
+            reason = "allowed by name"
+        elif project and _slugify(project) in COOLIFY_PROJECTS_SLUGS:
+            reason = f"allowed by project '{project}'"
+        elif FILTER_LABELS and any(labels.get(k) == v for k, v in FILTER_LABELS):
+            reason = "allowed by label"
+        else:
+            reason = "not whitelisted"
+        logger.info(
+            "Docker container: name=%s status=%s project_label=%s -> %s",
+            c.name,
+            c.status,
+            project,
+            reason,
+        )
+
+    by_name = {c.name: c for c in all_containers if is_allowed(c)}
     out = [card for c in by_name.values() if (card := _card(c))]
     present = {card["project"] for card in out if card["project"]}
     if coolify_enabled():
         out += [_card_missing(p) for p in COOLIFY_PROJECTS - present]
     out.sort(key=lambda x: x["name"].lower())
+    logger.info("list_allowed: %d Docker containers, %d cards", len(all_containers), len(out))
     return out
 
 
