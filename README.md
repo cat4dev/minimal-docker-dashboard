@@ -52,13 +52,14 @@ Set in `.env`:
 
 ```env
 COOLIFY_API_URL=http://192.168.1.11:8000
-COOLIFY_API_TOKEN=your-deploy-only-token
+COOLIFY_API_TOKEN=your-coolify-api-token
 COOLIFY_PROJECTS=cat4dev,core
 ```
 
 - The single **Deploy** button per project always force-deploys (`force=true`), because it exists to bring back GC'd/removed containers — a polite deploy can refuse while a deployment is in progress.
+- The token needs at least the **deploy** ability. If containers have been garbage-collected and no live container exists for the project, the token also needs the **read** ability so the dashboard can resolve the project name to Coolify resource UUIDs.
 
-- `COOLIFY_PROJECTS` is the deploy **allowlist**: only these project names can be redeployed (`POST /api/v1/deploy?uuid=<project>`).
+- `COOLIFY_PROJECTS` is the deploy **allowlist**: only these project names can be redeployed. The dashboard resolves each project to its Coolify resource UUIDs and calls `POST /api/v1/deploy?uuid=<resource-uuids>&force=true`.
 - It is also a **watchlist**: each project always gets a card. If Docker has no containers for it (GC removed them), the card shows **Missing** with a Deploy button to bring it back.
 - The project is read from the container's `coolify.projectName` label (or `com.docker.compose.project`); either is accepted.
 - For live projects, every card from that project gets a Deploy button.
